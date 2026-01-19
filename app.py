@@ -226,7 +226,7 @@ if st.session_state['quiz_data']:
                 if good_img: st.image(good_img, caption="정답이야 새우 대단해!")
             else:
                 if st.session_state['retry_count'] == 0:
-                    st.warning("아까비! 한 번만 더 생각해볼까? 🤔 (기회 1번 남음!)")
+                    st.warning("오~이런 새우야! 한 번만 더 생각해볼까? 🤔 (기회 1번 남음!)")
                     st.session_state['retry_count'] += 1
                 else:
                     st.error(f"땡! 정답은 '{question['word']}' 였어.")
@@ -249,4 +249,5 @@ if st.session_state['quiz_data']:
                     st.session_state['current_index'] += 1
                     st.session_state['is_correct'] = False
                     st.session_state['retry_count'] = 0
+
                     st.rerun()
