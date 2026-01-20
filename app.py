@@ -11,7 +11,7 @@ from datetime import datetime
 try:
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 except:
-    GOOGLE_API_KEY = "AIzaSyBUp9YNp86b7JV2p3HZluI9DgtosG3J-T0"
+    GOOGLE_API_KEY = ""
 
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY.strip())
@@ -337,4 +337,5 @@ if st.session_state['quiz_data']:
                 st.session_state['current_index'] += 1
                 st.session_state['is_correct'] = False
                 st.session_state['retry_count'] = 0
+
                 st.rerun()
