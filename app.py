@@ -12,12 +12,10 @@ import io  # ★ 메모리 기반 오디오 처리를 위해 추가
 import difflib  # ★ 너그러운 채점(오타 허용)을 위해 추가
 
 # 1. API 키 설정
-# 보안을 위해 st.secrets 사용을 권장합니다.
-# 로컬 테스트 시에는 streamlit secrets 설정(.streamlit/secrets.toml)을 이용하세요.
 try:
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 except:
-    # 기본값은 유지하되, 가급적 secrets 설정을 권장
+    # 로컬 테스트용 키
     GOOGLE_API_KEY = ""
 
 if GOOGLE_API_KEY:
@@ -35,7 +33,7 @@ def get_base64_of_bin_file(bin_file):
     return base64.b64encode(data).decode()
 
 # ==========================================
-# ★ (NEW) 자동완성 끄기 함수 (기억 상실 마법) ★
+# ★ (NEW) 자동완성 끄기 함수 ★
 # ==========================================
 def disable_autocomplete():
     components.html(
@@ -180,7 +178,7 @@ def find_image_file(base_name):
     return None
 
 def calculate_similarity(a, b):
-    # ★ 두 문자열의 유사도를 0~1 사이로 반환 (difflib 활용)
+    # 두 문자열의 유사도를 0~1 사이로 반환 (difflib 활용)
     return difflib.SequenceMatcher(None, a.strip().lower(), b.strip().lower()).ratio()
 
 # 세션 상태 초기화
@@ -248,16 +246,19 @@ if img_file is not None:
                 bytes_data = img_file.getvalue()
                 image_parts = [{"mime_type": img_file.type, "data": bytes_data}]
                 
-                # Gemini가 더 정확하게 JSON을 주도록 프롬프트 개선
+                # ★★★ [수정됨] 프롬프트를 다시 '영어 정의' 추출로 변경했습니다! ★★★
                 prompt = """
                 Extract data from this English vocabulary table.
                 Return ONLY a valid JSON array of objects. 
                 Each object must have exactly: "word" and "definition".
+                
                 Rules:
-                1. "definition" is the Korean meaning. 
-                2. If the definition contains the English word, replace it with "____".
-                3. NO markdown blocks. Just the raw JSON array.
-                Example: [{"word": "apple", "definition": "사과"}]
+                1. "definition" should be the English definition found in the image. 
+                2. If the definition contains the word itself, replace it with "____".
+                3. Remove any example sentences, keep only the definition.
+                4. NO markdown blocks. Just the raw JSON array.
+                
+                Example: [{"word": "apple", "definition": "a round red fruit"}]
                 """
                 
                 model = genai.GenerativeModel('gemini-flash-latest') 
@@ -356,8 +357,8 @@ if st.session_state['quiz_data']:
             hint_btn = st.button("힌트 보기 🔍")
             
         if hint_btn:
-            first_char = current_word[0] if len(current_word) > 0 else "?"
-            st.toast(f"쉿! 첫 글자는 '{first_char}' 이야!", icon="🤫")
+             first_char = current_word[0] if len(current_word) > 0 else "?"
+             st.toast(f"쉿! 첫 글자는 '{first_char}' 이야!", icon="🤫")
 
         if check_btn:
             similarity = calculate_similarity(user_answer, current_word)
@@ -376,7 +377,7 @@ if st.session_state['quiz_data']:
             # 2. 아주 아까운 오타 (유사도 80% 이상)
             elif similarity >= 0.8:
                 st.warning("오... 거의 다 맞았어! 스펠링을 한 번만 더 확인해볼까? 🤔")
-                # 기회를 한 번 더 줌 (retry_count는 유지하거나 한 번 더 기회)
+                # 기회를 한 번 더 줌 (카운트 증가 X)
             
             # 3. 틀림
             else:
