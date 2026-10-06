@@ -21,6 +21,38 @@ except:
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY.strip())
 
+# ==========================================
+# ★ (NEW) 사용할 모델 목록 ★
+# ==========================================
+# 예전에는 'gemini-flash-latest' 를 썼는데, 이건 "구글이 정한 최신 Flash 모델"을
+# 자동으로 따라가는 별칭이라 어느 날 하루 20회짜리 모델로 바뀌어 버렸습니다.
+# 그래서 하루 한도가 넉넉한 모델을 직접 지정합니다.
+# 위에서부터 순서대로 시도하고, 안 되면 다음 모델로 넘어갑니다.
+MODEL_CANDIDATES = [
+    "gemini-3.5-flash-lite",   # 하루 500회 / 분당 15회
+    "gemini-3.1-flash-lite",   # 하루 500회 / 분당 15회 (예비)
+    "gemini-3.8-flash",        # 하루 20회 (최후의 수단)
+]
+
+
+def ask_gemini(prompt, image_part):
+    """모델을 순서대로 시도해서 첫 성공 결과를 돌려줍니다."""
+    last_error = None
+    for model_name in MODEL_CANDIDATES:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content([prompt, image_part])
+            return response.text, model_name
+        except Exception as e:
+            last_error = e
+            msg = str(e).lower()
+            # 모델이 없거나(404) 한도를 다 썼으면(429) 다음 모델로 넘어갑니다.
+            if ("429" in msg) or ("404" in msg) or ("not found" in msg) or ("quota" in msg):
+                continue
+            # 그 밖의 진짜 오류는 바로 알립니다.
+            raise
+    raise last_error
+
 # 2. 페이지 기본 설정
 st.set_page_config(page_title="새우의 숙제 도우미", page_icon="🦐🎓", layout="wide")
 
@@ -188,6 +220,7 @@ if 'score' not in st.session_state: st.session_state['score'] = 0
 if 'is_correct' not in st.session_state: st.session_state['is_correct'] = False
 if 'retry_count' not in st.session_state: st.session_state['retry_count'] = 0
 if 'wrong_answers' not in st.session_state: st.session_state['wrong_answers'] = [] 
+if 'last_call_time' not in st.session_state: st.session_state['last_call_time'] = 0.0  # ★ 연타 방지용
 
 # ==========================================
 # 메인 화면 시작
@@ -241,50 +274,67 @@ with st.expander("📸 새로운 문제지 사진 찍기 (클릭!)", expanded=no
 # 3. AI 분석 및 저장 실행
 if img_file is not None:
     if st.button("이 사진으로 문제 만들기 🚀"):
-        with st.spinner('💖 새우가 열심히 단어를 읽고 있어요...'):
-            try:
-                bytes_data = img_file.getvalue()
-                image_parts = [{"mime_type": img_file.type, "data": bytes_data}]
-                
-                # ★★★ [수정됨] 프롬프트를 다시 '영어 정의' 추출로 변경했습니다! ★★★
-                prompt = """
-                Extract data from this English vocabulary table.
-                Return ONLY a valid JSON array of objects. 
-                Each object must have exactly: "word" and "definition".
-                
-                Rules:
-                1. "definition" should be the English definition found in the image. 
-                2. If the definition contains the word itself, replace it with "____".
-                3. Remove any example sentences, keep only the definition.
-                4. NO markdown blocks. Just the raw JSON array.
-                
-                Example: [{"word": "apple", "definition": "a round red fruit"}]
-                """
-                
-                model = genai.GenerativeModel('gemini-flash-latest') 
-                response = model.generate_content([prompt, image_parts[0]])
-                
-                text_response = response.text.strip()
-                # 마크다운 태그 제거용 안전장치
-                if "```" in text_response:
-                    text_response = text_response.split("```")[1]
-                    if text_response.startswith("json"):
-                        text_response = text_response[4:]
-                
-                data = json.loads(text_response)
-                save_to_history(data)
-                
-                random.shuffle(data)
-                st.session_state['quiz_data'] = data
-                st.session_state['current_index'] = 0
-                st.session_state['score'] = 0
-                st.session_state['is_correct'] = False
-                st.session_state['retry_count'] = 0
-                st.session_state['wrong_answers'] = []
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"오류가 났어요: {e}")
+
+        # ★ (NEW) 연타 방지: 3초 안에 또 누르면 호출하지 않습니다.
+        elapsed = time.time() - st.session_state['last_call_time']
+        if elapsed < 3:
+            st.warning("조금만 기다렸다가 다시 눌러주세요 ⏳")
+        else:
+            st.session_state['last_call_time'] = time.time()
+
+            with st.spinner('💖 새우가 열심히 단어를 읽고 있어요...'):
+                try:
+                    bytes_data = img_file.getvalue()
+                    image_parts = [{"mime_type": img_file.type, "data": bytes_data}]
+
+                    # ★★★ [수정됨] 프롬프트를 다시 '영어 정의' 추출로 변경했습니다! ★★★
+                    prompt = """
+                    Extract data from this English vocabulary table.
+                    Return ONLY a valid JSON array of objects. 
+                    Each object must have exactly: "word" and "definition".
+                    
+                    Rules:
+                    1. "definition" should be the English definition found in the image. 
+                    2. If the definition contains the word itself, replace it with "____".
+                    3. Remove any example sentences, keep only the definition.
+                    4. NO markdown blocks. Just the raw JSON array.
+                    
+                    Example: [{"word": "apple", "definition": "a round red fruit"}]
+                    """
+
+                    # ★ (NEW) 모델을 직접 지정해서 순서대로 시도합니다.
+                    text_response, used_model = ask_gemini(prompt, image_parts[0])
+                    text_response = text_response.strip()
+
+                    # 마크다운 태그 제거용 안전장치
+                    if "```" in text_response:
+                        text_response = text_response.split("```")[1]
+                        if text_response.startswith("json"):
+                            text_response = text_response[4:]
+
+                    data = json.loads(text_response)
+                    save_to_history(data)
+
+                    random.shuffle(data)
+                    st.session_state['quiz_data'] = data
+                    st.session_state['current_index'] = 0
+                    st.session_state['score'] = 0
+                    st.session_state['is_correct'] = False
+                    st.session_state['retry_count'] = 0
+                    st.session_state['wrong_answers'] = []
+                    st.session_state['used_model'] = used_model  # ★ 어떤 모델을 썼는지 기록
+                    st.rerun()
+
+                except Exception as e:
+                    msg = str(e)
+                    # ★ (NEW) 한도 초과는 아이가 알아볼 수 있는 말로 알려줍니다.
+                    if ("429" in msg) or ("quota" in msg.lower()) or ("exceeded" in msg.lower()):
+                        st.error("오늘 쓸 수 있는 횟수를 다 썼어요 😢 오후 4시가 지나면 다시 할 수 있어요!")
+                        st.caption("(계속 누르면 더 빨리 소진돼요. 조금만 기다려 주세요.)")
+                    elif "json" in msg.lower():
+                        st.error("사진에서 단어를 잘 못 읽었어요 🥲 좀 더 밝고 반듯하게 찍어서 다시 올려줄래요?")
+                    else:
+                        st.error(f"오류가 났어요: {e}")
 
 # 4. 퀴즈 진행 로직
 if st.session_state['quiz_data']:
@@ -400,3 +450,7 @@ if st.session_state['quiz_data']:
                 st.session_state['is_correct'] = False
                 st.session_state['retry_count'] = 0
                 st.rerun()
+
+# ★ (NEW) 어떤 모델로 문제를 만들었는지 작게 표시 (문제 생길 때 확인용)
+if st.session_state.get('used_model'):
+    st.caption(f"ℹ️ 사용 모델: {st.session_state['used_model']}")
